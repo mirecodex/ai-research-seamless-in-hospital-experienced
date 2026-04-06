@@ -187,6 +187,57 @@ class HospitalGraph:
 
         return None
 
+    def search_locations(self, query: str, max_results: int = 10) -> list[NodeData]:
+        """Multi-pass fuzzy search returning up to max_results non-junction nodes.
+
+        Pass order: exact name, exact alias, partial name, partial alias.
+        Earlier passes take priority; a node appears at most once in the result.
+        """
+        q = query.lower().strip()
+        seen: set[str] = set()
+        results: list[NodeData] = []
+
+        def _collect(node: NodeData) -> bool:
+            if node.id in seen:
+                return False
+            seen.add(node.id)
+            results.append(node)
+            return len(results) >= max_results
+
+        for node in self.nodes.values():
+            if node.type == "junction":
+                continue
+            if node.name.lower() == q:
+                if _collect(node):
+                    return results
+
+        for node in self.nodes.values():
+            if node.type == "junction":
+                continue
+            for alias in node.aliases:
+                if alias.lower() == q:
+                    if _collect(node):
+                        return results
+                    break
+
+        for node in self.nodes.values():
+            if node.type == "junction":
+                continue
+            if q in node.name.lower():
+                if _collect(node):
+                    return results
+
+        for node in self.nodes.values():
+            if node.type == "junction":
+                continue
+            for alias in node.aliases:
+                if q in alias.lower():
+                    if _collect(node):
+                        return results
+                    break
+
+        return results
+
     def euclidean_distance(self, id_a: str, id_b: str) -> float:
         a = self.nodes[id_a]
         b = self.nodes[id_b]

@@ -4,13 +4,13 @@ from app.generative.engine import GenAI
 from config.setting import env
 from langchain_core.language_models.chat_models import BaseChatModel
 
-CONFIG = {
+VERTEX_CONFIG = {
     "gemini_regular": {
         "creator_method": "chatGgenai",
         "params": {"model": env.GEMINI_REGULAR_MODEL, "think": True},
     },
     "gemini_mini": {
-        "creator_method": "chatGgenai", 
+        "creator_method": "chatGgenai",
         "params": {"model": env.GEMINI_MINI_MODEL, "think": False},
     },
     "gemini_thinking": {
@@ -31,15 +31,43 @@ CONFIG = {
     },
 }
 
+LITELLM_CONFIG = {
+    "gemini_regular": {
+        "creator_method": "chatLiteLLM",
+        "params": {"model": env.GEMINI_REGULAR_MODEL},
+    },
+    "gemini_mini": {
+        "creator_method": "chatLiteLLM",
+        "params": {"model": env.GEMINI_MINI_MODEL},
+    },
+    "gemini_thinking": {
+        "creator_method": "chatLiteLLM",
+        "params": {"model": env.GEMINI_THINKING_MODEL},
+    },
+    "openai_regular": {
+        "creator_method": "chatLiteLLM",
+        "params": {"model": env.OPENAI_REGULAR_MODEL},
+    },
+    "openai_mini": {
+        "creator_method": "chatLiteLLM",
+        "params": {"model": env.OPENAI_MINI_MODEL},
+    },
+    "openai_thinking": {
+        "creator_method": "chatLiteLLM",
+        "params": {"model": env.OPENAI_THINKING_MODEL},
+    },
+}
+
+
 class LLMManager:
     with open('app/generative/default.json', 'r') as f:
         DEFAULTS = json.load(f)
-        
+
     def __init__(self):
         self._llms = {}
         self.gen_ai = GenAI()
-        
-        self.llm_configs = CONFIG
+
+        self.llm_configs = LITELLM_CONFIG if env.LLM_PROVIDER == "litellm" else VERTEX_CONFIG
         for name, config in self.llm_configs.items():
             if name in self.DEFAULTS and "default_params" in self.DEFAULTS[name]:
                 config["default_params"] = self.DEFAULTS[name]["default_params"]
@@ -59,9 +87,9 @@ class LLMManager:
 
         base_params.update(override_params)
         final_params = base_params
-        
+
         creator_method = getattr(self.gen_ai, config["creator_method"])
-        
+
         llm_instance = creator_method(**final_params)
         self._llms[name] = llm_instance
         return llm_instance

@@ -18,3 +18,4 @@ class NavigationDirectRequest(BaseModel):
     to_node: str = Field(..., description="Destination node ID")
     profile: str = Field(default="default")
     building_id: str = Field(default="shlv")
+    output_format: str = Field(default="svg", description="Output format: svg or png")

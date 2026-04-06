@@ -3,15 +3,18 @@ import traceback
 import uuid
 
 from app.generative import manager as AiManager
-from app.utils.HttpResponseUtils import response_success, response_error
+from app.utils.HttpResponseUtils import response_success, response_error, response_format
 from app.services.NavigationRouterService import NavigationRouter
 from app.services.NavigationAgentService import NavigationAgent
 from app.services.GuideMeAgentService import GuideMeAgent
 from app.services.GraphInfoAgentService import GraphInfoAgent
+from app.services.InstructionGenService import InstructionGenerator
 from app.schemas.NavigationStateSchema import NavigationState
-from app.schemas.WebSocketMessageSchema import WSRouteMeta, WSRouteStep, WSRouteComplete, WSError
+from app.schemas.WebSocketMessageSchema import WSRouteMeta, WSRouteResult, WSRouteFloorImage, WSRouteComplete, WSError
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import StateGraph, END
+from core.navigation import GraphManager, find_route
+from app.tools.RouteRenderer import routeRendererHandler
 from typing import Dict
 
 
@@ -23,6 +26,7 @@ class NavigationController:
         self.nav_agent = NavigationAgent(llm=self.llm)
         self.guide_me_agent = GuideMeAgent(llm=self.llm)
         self.graph_info_agent = GraphInfoAgent(llm=self.llm)
+        self.instruction_gen = InstructionGenerator(llm=self.llm)
         self.build_graph(checkpoint=InMemorySaver())
 
     async def nav_agent_node(self, state: NavigationState) -> Dict:
@@ -88,6 +92,42 @@ class NavigationController:
         self.graph = graph
         return graph
 
+    # -- Shared helpers --
+
+    def _combine_instructions(self, segments: list, instructions: list) -> str:
+        lines = []
+        for i, seg in enumerate(segments):
+            text = instructions[i] if i < len(instructions) else ""
+            if not text or not text.strip():
+                text = self._fallback_step_instruction(seg)
+            lines.append(text)
+        return "\n".join(lines)
+
+    def _build_full_response(
+        self,
+        route_data: dict,
+        full_render: dict,
+        combined_instruction: str,
+        all_landmarks: list[str],
+    ) -> dict:
+        images = []
+        for floor, img in full_render.get("floors", {}).items():
+            images.append({
+                "floor": int(floor),
+                "svg_data": img.get("svg_data"),
+                "image_url": img.get("image_url"),
+            })
+        images.sort(key=lambda x: x["floor"])
+
+        return {
+            "route_data": route_data,
+            "images": images,
+            "instruction": combined_instruction,
+            "landmarks": all_landmarks,
+        }
+
+    # -- HTTP endpoints --
+
     async def start_navigating(self, input_data: dict):
         try:
             initial_state = NavigationState(
@@ -105,13 +145,108 @@ class NavigationController:
             )
             config = {"configurable": {"thread_id": str(uuid.uuid4())}}
             result = await self.graph.ainvoke(initial_state, config=config)
-            return response_success(result["response"])
+
+            route_data = self._parse_json_field(result.get("route_data"))
+            rendered = self._parse_json_field(result.get("rendered_images")) or []
+            instructions = result.get("instructions") or []
+
+            if route_data and route_data.get("success") and rendered:
+                path = route_data.get("path") or route_data.get("nodes_visited") or []
+                building_id = input_data.get("building_id", "shlv")
+                output_format = input_data.get("output_format", "svg")
+
+                full_render = await routeRendererHandler.render_full(
+                    path, building_id, "default", output_format,
+                )
+                combined = self._combine_instructions(rendered, instructions)
+                all_landmarks = []
+                seen = set()
+                for seg in rendered:
+                    for lm in seg.get("landmarks", []):
+                        if lm not in seen:
+                            seen.add(lm)
+                            all_landmarks.append(lm)
+
+                payload = self._build_full_response(route_data, full_render, combined, all_landmarks)
+                return response_success(payload)
+
+            agent_response = result.get("response", "")
+            agent_msg = ""
+            try:
+                parsed = json.loads(agent_response)
+                agent_msg = parsed.get("final_answer") or parsed.get("error") or ""
+            except (json.JSONDecodeError, TypeError):
+                agent_msg = agent_response
+
+            query = input_data.get("query", "tujuan")
+            error_code, fallback_msg = self._classify_nav_error(result, agent_msg, query)
+            return response_format(agent_msg or fallback_msg, 422)
         except Exception as e:
             traceback.print_exc()
             return response_error(e)
 
+    async def navigate_direct(self, input_data: dict):
+        building_id = input_data.get("building_id", "shlv")
+        from_node = input_data.get("from_node", "")
+        to_node = input_data.get("to_node", "")
+        profile = input_data.get("profile", "default")
+        output_format = input_data.get("output_format", "svg")
+
+        try:
+            graph = GraphManager.get(building_id)
+            if not graph:
+                return response_format("Building not found", 404)
+
+            route_response = find_route(graph, from_node, to_node, profile)
+            if not route_response.success:
+                return response_format(route_response.error or "Route not found", 422)
+
+            path = route_response.nodes_visited
+            full_render = await routeRendererHandler.render_full(path, building_id, profile, output_format)
+            segments = full_render.get("segments", [])
+
+            instructions = []
+            for seg in segments:
+                try:
+                    instruction = await self.instruction_gen.generate(
+                        direction=seg.get("direction", "straight"),
+                        distance_m=seg.get("distance_m", 0),
+                        landmarks=seg.get("landmarks", []),
+                        floor=seg.get("floor", 1),
+                        floor_change=seg.get("floor_change"),
+                    )
+                    if not instruction or not instruction.strip():
+                        instruction = self._fallback_step_instruction(seg)
+                except Exception:
+                    instruction = self._fallback_step_instruction(seg)
+                instructions.append(instruction)
+
+            combined = "\n".join(instructions)
+            all_landmarks = []
+            seen = set()
+            for seg in segments:
+                for lm in seg.get("landmarks", []):
+                    if lm not in seen:
+                        seen.add(lm)
+                        all_landmarks.append(lm)
+
+            route_data = {
+                "success": True,
+                "total_distance": route_response.total_distance,
+                "estimated_time_seconds": route_response.estimated_time_seconds,
+                "floors_visited": list({s.get("floor", 1) for s in segments}),
+                "path": path,
+            }
+
+            payload = self._build_full_response(route_data, full_render, combined, all_landmarks)
+            return response_success(payload)
+        except Exception as e:
+            traceback.print_exc()
+            return response_error(e)
+
+    # -- Utilities --
+
     def _parse_json_field(self, value):
-        """Parse a field that might be a JSON string or already a Python object."""
         if value is None:
             return None
         if isinstance(value, (dict, list)):
@@ -122,6 +257,50 @@ class NavigationController:
             except (json.JSONDecodeError, TypeError):
                 return None
         return None
+
+    @staticmethod
+    def _fallback_step_instruction(seg: dict) -> str:
+        floor_change = seg.get("floor_change")
+        if floor_change:
+            from_f = floor_change.get("from_floor", "?")
+            to_f = floor_change.get("to_floor", "?")
+            via = floor_change.get("via", "lift")
+            via_label = {"elevator": "lift", "stairs": "tangga"}.get(via, via)
+            verb = "Naik" if (isinstance(to_f, int) and isinstance(from_f, int) and to_f > from_f) else "Turun"
+            return f"{verb} {via_label} dari Lantai {from_f} ke Lantai {to_f}."
+
+        direction = seg.get("direction", "straight")
+        direction_labels = {
+            "straight": "lurus",
+            "right": "belok kanan",
+            "left": "belok kiri",
+            "slight_right": "agak ke kanan",
+            "slight_left": "agak ke kiri",
+            "sharp_right": "belok kanan tajam",
+            "sharp_left": "belok kiri tajam",
+        }
+        dir_str = direction_labels.get(direction, "lurus")
+        distance_m = seg.get("distance_m", 0)
+        steps = max(1, int(distance_m / 0.7)) if distance_m > 0 else 5
+        landmarks = seg.get("landmarks", [])
+        landmark_str = ", ".join(landmarks) if landmarks else "tujuan"
+        return f"Jalan {dir_str} sekitar {steps} langkah menuju {landmark_str}."
+
+    @staticmethod
+    def _classify_nav_error(result: dict, agent_msg: str, query: str) -> tuple[str, str]:
+        lower = agent_msg.lower()
+        route_data = result.get("route_data")
+
+        if route_data and not route_data.get("success"):
+            return "ROUTE_FAILED", f"Tidak dapat menemukan rute menuju '{query}'."
+
+        loc_keywords = ("tidak ditemukan", "not found", "lokasi", "lokasi tidak", "tidak bisa menemukan")
+        if any(kw in lower for kw in loc_keywords):
+            return "LOC_NOT_FOUND", f"Lokasi '{query}' tidak ditemukan."
+
+        return "ROUTE_FAILED", f"Tidak dapat menemukan rute menuju '{query}'."
+
+    # -- WebSocket handler --
 
     async def handle_websocket(self, websocket):
         from starlette.websockets import WebSocketState
@@ -154,9 +333,24 @@ class NavigationController:
                     instructions = result.get("instructions") or []
 
                     if route_data and route_data.get("success"):
+                        if not rendered:
+                            query = data.get("query", "tujuan")
+                            await websocket.send_json(WSError(
+                                code="RENDER_FAILED",
+                                message=f"Gagal merender rute menuju '{query}'. Silakan coba lagi.",
+                            ).model_dump())
+                            continue
+
+                        path = route_data.get("path") or route_data.get("nodes_visited") or []
+                        building_id = data.get("building_id", "shlv")
+                        output_format = data.get("output_format", "svg")
+
+                        full_render = await routeRendererHandler.render_full(
+                            path, building_id, "default", output_format,
+                        )
+
                         floors_visited = route_data.get("floors_visited", [])
                         meta = WSRouteMeta(
-                            total_steps=len(rendered),
                             total_distance_m=route_data.get("total_distance", 0),
                             estimated_time_s=int(route_data.get("estimated_time_seconds", 0)),
                             floors_involved=floors_visited,
@@ -164,19 +358,30 @@ class NavigationController:
                         )
                         await websocket.send_json(meta.model_dump())
 
-                        for i, seg in enumerate(rendered):
-                            instruction = instructions[i] if i < len(instructions) else ""
-                            step = WSRouteStep(
-                                step=i + 1,
-                                total_steps=len(rendered),
-                                floor=seg.get("floor", 1),
-                                instruction=instruction,
-                                image_url=seg.get("image_url"),
-                                svg_data=seg.get("svg_data"),
-                                distance_m=seg.get("distance_m", 0),
-                                landmarks=seg.get("landmarks", []),
-                            )
-                            await websocket.send_json(step.model_dump())
+                        combined = self._combine_instructions(rendered, instructions)
+                        all_landmarks = []
+                        seen = set()
+                        for seg in rendered:
+                            for lm in seg.get("landmarks", []):
+                                if lm not in seen:
+                                    seen.add(lm)
+                                    all_landmarks.append(lm)
+
+                        images = []
+                        for floor, img in full_render.get("floors", {}).items():
+                            images.append(WSRouteFloorImage(
+                                floor=int(floor),
+                                svg_data=img.get("svg_data"),
+                                image_url=img.get("image_url"),
+                            ))
+                        images.sort(key=lambda x: x.floor)
+
+                        route_result = WSRouteResult(
+                            images=images,
+                            instruction=combined,
+                            landmarks=all_landmarks,
+                        )
+                        await websocket.send_json(route_result.model_dump())
 
                         dest_name = data.get("query", "tujuan")
                         complete = WSRouteComplete(
@@ -186,23 +391,26 @@ class NavigationController:
                         await websocket.send_json(complete.model_dump())
                     else:
                         response_text = result.get("response") or ""
-                        msg = ""
+                        agent_msg = ""
                         try:
                             parsed = json.loads(response_text)
-                            msg = parsed.get("final_answer") or ""
+                            agent_msg = parsed.get("final_answer") or parsed.get("error") or ""
                         except (json.JSONDecodeError, TypeError):
-                            msg = response_text
+                            agent_msg = response_text
 
-                        if not msg:
-                            msg = "Lokasi tidak ditemukan. Silakan coba dengan nama lain."
-
-                        error = WSError(code=404, message=msg)
-                        await websocket.send_json(error.model_dump())
+                        query = data.get("query", "")
+                        error_code, fallback_msg = self._classify_nav_error(result, agent_msg, query)
+                        await websocket.send_json(WSError(
+                            code=error_code,
+                            message=agent_msg or fallback_msg,
+                        ).model_dump())
 
                 except Exception as e:
                     traceback.print_exc()
-                    error = WSError(code=500, message=str(e))
-                    await websocket.send_json(error.model_dump())
+                    await websocket.send_json(WSError(
+                        code="INTERNAL_ERROR",
+                        message=str(e),
+                    ).model_dump())
 
         except Exception:
             pass

@@ -10,7 +10,7 @@ def setup_middleware(app):
         allow_origins=origins,
         allow_credentials=True,
         allow_headers=["*"],
-        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         max_age=600,
     )
     if env.APP_ENV == "local":

@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     JWT_RS_PUBLIC_KEY: str
     SIGNATURE_SECRET: str
     SIGNATURE_TIMEOUT: int
-    ALLOWED_ORIGINS: Optional[str] = "http://localhost:8080"
+    ALLOWED_ORIGINS: Optional[str] = "http://localhost:8080,http://localhost:5173"
     JWT_ROLES_INDEX: Optional[str] = 'sub'
     
     # Redis (General & Ratelimit)
@@ -148,6 +148,7 @@ class Settings(BaseSettings):
     DEFAULT_BUILDING: Optional[str] = "shlv"
 
     # LLM Gateway (Siloam LiteLLM proxy)
+    LLM_PROVIDER: Optional[str] = "litellm"  # "litellm" or "vertex"
     LLM_API_KEY: Optional[str] = None
     LLM_BASE_URL: Optional[str] = None
     LLM_MODEL: Optional[str] = "Claude-4.5-Haiku"

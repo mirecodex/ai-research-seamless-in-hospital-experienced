@@ -55,9 +55,7 @@ class NavigationAgent(BaseAgent):
             """
             path_list = json.loads(path) if isinstance(path, str) else path
             full_result = await routeRendererHandler.render(path_list, building_id, profile, output_format)
-            # Store full result (with SVG data) on handler — do NOT send SVG to LLM
-            routeRendererHandler._last_rendered = full_result
-            # Return only metadata to LLM (strip svg_data to avoid 20M token explosion)
+            # Return only metadata to LLM (strip svg_data to avoid token explosion)
             summary = []
             for seg in full_result:
                 summary.append({
@@ -66,6 +64,7 @@ class NavigationAgent(BaseAgent):
                     "direction": seg.get("direction"),
                     "landmarks": seg.get("landmarks", []),
                     "distance_m": seg.get("distance_m", 0),
+                    "floor_change": seg.get("floor_change"),
                     "has_image": bool(seg.get("svg_data") or seg.get("image_url")),
                 })
             return json.dumps(summary, ensure_ascii=False)
@@ -91,7 +90,7 @@ class NavigationAgent(BaseAgent):
             self.rebind_prompt_variable(
                 time=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 building_id=building_id,
-                current_location=current_location or "j1",
+                current_location=current_location or "f1_j1",
                 current_floor=str(current_floor or 1),
             )
 
@@ -153,10 +152,14 @@ class NavigationAgent(BaseAgent):
                                 except json.JSONDecodeError:
                                     pass
                             elif tool_name == "route_renderer":
-                                try:
-                                    rendered_images = json.loads(tool_result_str)
-                                except json.JSONDecodeError:
-                                    pass
+                                path_arg = tool_args.get("path", "[]")
+                                path_list = json.loads(path_arg) if isinstance(path_arg, str) else path_arg
+                                rendered_images = await routeRendererHandler.render(
+                                    path_list,
+                                    tool_args.get("building_id", building_id),
+                                    tool_args.get("profile", "default"),
+                                    tool_args.get("output_format", output_format),
+                                )
 
                             messages.append(ToolMessage(
                                 content=tool_result_str,
@@ -170,11 +173,6 @@ class NavigationAgent(BaseAgent):
 
             if not final_answer:
                 final_answer = raw_result.content if hasattr(raw_result, "content") else "Navigasi selesai."
-
-            # Use stored rendered segments (contains full SVG data) instead of parsed tool messages
-            if hasattr(routeRendererHandler, '_last_rendered') and routeRendererHandler._last_rendered:
-                rendered_images = routeRendererHandler._last_rendered
-                routeRendererHandler._last_rendered = None
 
             instructions = []
             if rendered_images and isinstance(rendered_images, list):
@@ -207,12 +205,57 @@ class NavigationAgent(BaseAgent):
     async def _generate_instructions(self, rendered_segments: list) -> list[str]:
         instructions = []
         for seg in rendered_segments:
-            instruction = await self.instruction_gen.generate(
-                direction=seg.get("direction", "straight"),
-                distance_m=seg.get("distance_m", 0),
-                landmarks=seg.get("landmarks", []),
-                floor=seg.get("floor", 1),
-                floor_change=seg.get("floor_change"),
-            )
+            direction = seg.get("direction", "straight")
+            distance_m = seg.get("distance_m", 0)
+            landmarks = seg.get("landmarks", [])
+            floor = seg.get("floor", 1)
+            floor_change = seg.get("floor_change")
+
+            try:
+                instruction = await self.instruction_gen.generate(
+                    direction=direction,
+                    distance_m=distance_m,
+                    landmarks=landmarks,
+                    floor=floor,
+                    floor_change=floor_change,
+                )
+                if not instruction or not instruction.strip():
+                    instruction = self._fallback_instruction(
+                        direction, distance_m, landmarks, floor_change
+                    )
+            except Exception:
+                instruction = self._fallback_instruction(
+                    direction, distance_m, landmarks, floor_change
+                )
+
             instructions.append(instruction)
         return instructions
+
+    @staticmethod
+    def _fallback_instruction(
+        direction: str,
+        distance_m: float,
+        landmarks: list[str],
+        floor_change: dict | None,
+    ) -> str:
+        if floor_change:
+            from_f = floor_change.get("from_floor", "?")
+            to_f = floor_change.get("to_floor", "?")
+            via = floor_change.get("via", "lift")
+            via_label = {"elevator": "lift", "stairs": "tangga"}.get(via, via)
+            verb = "Naik" if (isinstance(to_f, int) and isinstance(from_f, int) and to_f > from_f) else "Turun"
+            return f"{verb} {via_label} dari Lantai {from_f} ke Lantai {to_f}."
+
+        direction_labels = {
+            "straight": "lurus",
+            "right": "belok kanan",
+            "left": "belok kiri",
+            "slight_right": "agak ke kanan",
+            "slight_left": "agak ke kiri",
+            "sharp_right": "belok kanan tajam",
+            "sharp_left": "belok kiri tajam",
+        }
+        dir_str = direction_labels.get(direction, "lurus")
+        steps = max(1, int(distance_m / 0.7)) if distance_m > 0 else 5
+        landmark_str = ", ".join(landmarks) if landmarks else "tujuan"
+        return f"Jalan {dir_str} sekitar {steps} langkah menuju {landmark_str}."

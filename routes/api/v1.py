@@ -1,5 +1,5 @@
 import app.schemas as schemas
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Query, Request
 # from config.manual_mcp import mcpconfig
 from app.controllers.ChatbotController import chatbotController
 from app.controllers.NavigationController import navigationController
@@ -9,6 +9,7 @@ from app.repositories.GraphRepository import graphRepository
 from core.navigation import GraphManager, find_route
 from app.utils.HttpResponseUtils import response_success, response_error, response_format
 from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field
 import os
 
 router = APIRouter()
@@ -37,6 +38,11 @@ async def direct_route(input: NavigationDirectRequest):
         return response_success(result.model_dump())
     except Exception as e:
         return response_error(str(e))
+
+
+@router.post("/navigate/direct")
+async def navigate_direct(input: NavigationDirectRequest):
+    return await navigationController.navigate_direct(input.model_dump())
 
 
 # --- Graph Admin ---
@@ -106,9 +112,55 @@ async def list_locations(building_id: str = "shlv"):
     return response_success(graph.get_locations())
 
 
+@router.get("/locations/search")
+async def search_locations(
+    q: str = Query(..., min_length=1, description="Search query"),
+    building_id: str = Query(default="shlv", description="Building ID"),
+    max_results: int = Query(default=10, ge=1, le=50, description="Maximum results"),
+):
+    graph = GraphManager.get(building_id)
+    if not graph:
+        return response_format("Building not found", 404)
+    nodes = graph.search_locations(q, max_results=max_results)
+    results = [
+        {
+            "id": node.id,
+            "name": node.name,
+            "floor": node.floor,
+            "category": node.category,
+            "aliases": node.aliases,
+        }
+        for node in nodes
+    ]
+    return response_success(results)
+
+
 @router.get("/floors/{building_id}/{floor}.svg")
 async def get_floor_svg(building_id: str, floor: int):
     svg_path = os.path.join(_PROJECT_ROOT, "data", "floors", building_id, f"{floor}.svg")
     if not os.path.exists(svg_path):
         return response_format("Floor SVG not found", 404)
     return FileResponse(svg_path, media_type="image/svg+xml")
+
+
+# --- Floor SVG Upload ---
+
+class SvgUploadPayload(BaseModel):
+    svg_content: str = Field(..., description="Raw SVG content string")
+    floor_number: int = Field(default=1, description="Floor number")
+
+
+@router.post("/floors/{building_id}/svg")
+async def upload_floor_svg(building_id: str, payload: SvgUploadPayload):
+    try:
+        floor_dir = os.path.join(_PROJECT_ROOT, "data", "floors", building_id)
+        os.makedirs(floor_dir, exist_ok=True)
+
+        svg_path = os.path.join(floor_dir, f"{payload.floor_number}.svg")
+        with open(svg_path, "w", encoding="utf-8") as f:
+            f.write(payload.svg_content)
+
+        url = f"/api/v1/floors/{building_id}/{payload.floor_number}.svg"
+        return response_success({"url": url, "building_id": building_id, "floor": payload.floor_number})
+    except Exception as e:
+        return response_error(str(e))

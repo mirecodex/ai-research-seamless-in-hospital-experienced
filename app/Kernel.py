@@ -63,10 +63,15 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.warning("Redis pub/sub unavailable, graph sync disabled")
 
-    await PlaywrightManager.start(pool_size=env.PLAYWRIGHT_POOL_SIZE)
+    if env.PLAYWRIGHT_POOL_SIZE > 0:
+        try:
+            await PlaywrightManager.start(pool_size=env.PLAYWRIGHT_POOL_SIZE)
+        except Exception:
+            logger.warning("Playwright unavailable, PNG rendering disabled")
 
     yield
-    await PlaywrightManager.stop()
+    if env.PLAYWRIGHT_POOL_SIZE > 0:
+        await PlaywrightManager.stop()
     await GraphManager.stop_listener()
     if hasattr(app.state, "mcp"):
         await app.state.mcp.close()

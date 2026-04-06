@@ -1,14 +1,17 @@
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_openai import ChatOpenAI, AzureChatOpenAI
 from config.setting import env
 from config.credentials import google_credential
-from langchain_openai import AzureChatOpenAI
 from langchain_aws import ChatBedrock
 import boto3
 
 class GenAI:
     def __init__(self):
-        self.project = env.GOOGLE_PROJECT_NAME        
-        self.credentials = google_credential()
+        self.project = env.GOOGLE_PROJECT_NAME
+        try:
+            self.credentials = google_credential()
+        except Exception:
+            self.credentials = None
     
     def chatGgenai(self, model, think: bool=False, streaming: bool=False):
         budget = -1 if think else 0
@@ -82,3 +85,12 @@ class GenAI:
             region_name=region_name,
             **kwargs
         ) if not return_session else session
+
+    def chatLiteLLM(self, model: str = None, temperature: float = 0.0, **kwargs) -> ChatOpenAI:
+        return ChatOpenAI(
+            model=model or env.LLM_MODEL,
+            base_url=env.LLM_BASE_URL,
+            api_key=env.LLM_API_KEY,
+            temperature=temperature,
+            **kwargs,
+        )

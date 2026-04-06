@@ -37,9 +37,10 @@ class ChatbotController:
         
         # Initialize QNA agent dengan lazy loading tools
         # Tools akan di-load saat pertama kali digunakan (setelah open() dipanggil)
+        mcp_tools = self.mcp_config.get_tools_for_bind(["faq", "hospital"]) if self.mcp_config else []
         self.qna_agent = QNAAgent(
             llm=self.llm,
-            tools_mcp=self.mcp_config.get_tools_for_bind(["faq", "hospital"])
+            tools_mcp=mcp_tools
         )
 
         self.build_graph(checkpoint=InMemorySaver())

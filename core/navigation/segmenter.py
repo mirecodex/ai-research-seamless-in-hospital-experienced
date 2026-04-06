@@ -1,3 +1,5 @@
+from typing import Optional
+
 from pydantic import BaseModel
 
 from .graph import HospitalGraph
@@ -12,6 +14,7 @@ class RouteSegment(BaseModel):
     landmarks: list[str] = []
     start_node: str
     end_node: str
+    floor_change: Optional[dict] = None
 
 
 class RouteSegmenter:
@@ -28,12 +31,17 @@ class RouteSegmenter:
         if len(path) < 2:
             return []
 
-        floor_groups = self._split_by_floor(graph, path)
+        floor_groups, transitions = self._split_by_floor(graph, path)
         segments: list[RouteSegment] = []
 
-        for group in floor_groups:
+        for gi, group in enumerate(floor_groups):
             turn_indices = self._detect_turns(graph, group)
             sub_segments = self._split_at_indices(graph, group, turn_indices)
+
+            # Attach floor_change to the first segment of a group that resulted from a floor transition
+            if sub_segments and gi in transitions:
+                sub_segments[0].floor_change = transitions[gi]
+
             for seg in sub_segments:
                 split = self._split_by_distance(seg)
                 segments.extend(split)
@@ -57,21 +65,43 @@ class RouteSegmenter:
 
     def _split_by_floor(
         self, graph: HospitalGraph, path: list[str]
-    ) -> list[list[str]]:
+    ) -> tuple[list[list[str]], dict[int, dict]]:
+        """Split path into per-floor groups and record floor transitions.
+
+        Returns (groups, transitions) where transitions maps group index to
+        {"from_floor": int, "to_floor": int, "via": "elevator"|"stairs"|"corridor"}.
+        """
         if not path:
-            return []
+            return [], {}
 
         groups: list[list[str]] = [[path[0]]]
+        transitions: dict[int, dict] = {}
 
         for i in range(1, len(path)):
-            prev_floor = graph.nodes[path[i - 1]].floor
-            curr_floor = graph.nodes[path[i]].floor
-            if curr_floor != prev_floor:
+            prev_node = graph.nodes[path[i - 1]]
+            curr_node = graph.nodes[path[i]]
+            if curr_node.floor != prev_node.floor:
+                via = "corridor"
+                if curr_node.category == "ELEVATOR" or prev_node.category == "ELEVATOR":
+                    via = "elevator"
+                elif curr_node.category == "STAIRS" or prev_node.category == "STAIRS":
+                    via = "stairs"
+                elif curr_node.type == "elevator" or prev_node.type == "elevator":
+                    via = "elevator"
+                elif curr_node.type == "stairs" or prev_node.type == "stairs":
+                    via = "stairs"
+
+                group_idx = len(groups)
+                transitions[group_idx] = {
+                    "from_floor": prev_node.floor,
+                    "to_floor": curr_node.floor,
+                    "via": via,
+                }
                 groups.append([path[i]])
             else:
                 groups[-1].append(path[i])
 
-        return groups
+        return groups, transitions
 
     def _split_at_indices(
         self,
@@ -118,6 +148,7 @@ class RouteSegmenter:
             landmarks=[],
             start_node=segment.nodes[0],
             end_node=segment.nodes[mid],
+            floor_change=segment.floor_change,
         )
         second = RouteSegment(
             nodes=segment.nodes[mid:],

@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Navigation WebSocket Test Client</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: #0f172a;
+    color: #e2e8f0;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* -- Header -- */
+  .header {
+    padding: 16px 24px;
+    background: #1e293b;
+    border-bottom: 1px solid #334155;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-shrink: 0;
+  }
+  .header h1 { font-size: 16px; font-weight: 600; }
+  .status-dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: #ef4444;
+    flex-shrink: 0;
+  }
+  .status-dot.connected { background: #22c55e; }
+  .status-text { font-size: 13px; color: #94a3b8; }
+
+  /* -- Config bar -- */
+  .config-bar {
+    padding: 12px 24px;
+    background: #1e293b;
+    border-bottom: 1px solid #334155;
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    flex-wrap: wrap;
+    flex-shrink: 0;
+  }
+  .config-bar label { font-size: 12px; color: #94a3b8; }
+  .config-bar input, .config-bar select {
+    background: #0f172a;
+    border: 1px solid #334155;
+    color: #e2e8f0;
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-size: 13px;
+  }
+  .config-bar input:focus, .config-bar select:focus {
+    outline: none;
+    border-color: #3b82f6;
+  }
+  .btn {
+    padding: 8px 16px;
+    border: none;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .btn-connect { background: #22c55e; color: #000; }
+  .btn-connect:hover { background: #16a34a; }
+  .btn-disconnect { background: #ef4444; color: #fff; }
+  .btn-disconnect:hover { background: #dc2626; }
+
+  /* -- Chat area -- */
+  .chat-area {
+    flex: 1;
+    overflow-y: auto;
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  /* -- Message bubbles -- */
+  .msg { max-width: 720px; }
+  .msg.user { align-self: flex-end; }
+  .msg.system { align-self: flex-start; }
+
+  .msg-bubble {
+    padding: 12px 16px;
+    border-radius: 12px;
+    font-size: 14px;
+    line-height: 1.6;
+  }
+  .msg.user .msg-bubble {
+    background: #3b82f6;
+    color: #fff;
+    border-bottom-right-radius: 4px;
+  }
+  .msg.system .msg-bubble {
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-bottom-left-radius: 4px;
+  }
+
+  /* -- Route meta card -- */
+  .route-meta {
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 12px;
+    padding: 16px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 12px;
+  }
+  .meta-item { text-align: center; }
+  .meta-item .value { font-size: 24px; font-weight: 700; color: #3b82f6; }
+  .meta-item .label { font-size: 11px; color: #94a3b8; margin-top: 2px; }
+
+  /* -- Route step card -- */
+  .route-step {
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .step-header {
+    padding: 10px 16px;
+    background: #334155;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 13px;
+  }
+  .step-badge {
+    background: #3b82f6;
+    color: #fff;
+    padding: 2px 10px;
+    border-radius: 99px;
+    font-weight: 600;
+    font-size: 12px;
+  }
+  .step-floor { color: #94a3b8; }
+  .step-image {
+    width: 100%;
+    max-height: 400px;
+    overflow: auto;
+    background: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .step-image svg { width: 100%; height: auto; }
+  .step-image img { width: 100%; height: auto; }
+  .step-instruction {
+    padding: 14px 16px;
+    font-size: 15px;
+    line-height: 1.5;
+    border-top: 1px solid #334155;
+  }
+  .step-landmarks {
+    padding: 8px 16px 12px;
+    font-size: 12px;
+    color: #94a3b8;
+  }
+  .step-landmarks span {
+    background: #334155;
+    padding: 2px 8px;
+    border-radius: 4px;
+    margin-right: 6px;
+    display: inline-block;
+    margin-bottom: 4px;
+  }
+
+  /* -- Route complete -- */
+  .route-complete {
+    background: #14532d;
+    border: 1px solid #22c55e;
+    border-radius: 12px;
+    padding: 16px;
+    text-align: center;
+  }
+  .route-complete .dest { font-size: 18px; font-weight: 700; color: #22c55e; }
+
+  /* -- Error -- */
+  .msg-error {
+    background: #450a0a;
+    border: 1px solid #ef4444;
+    border-radius: 12px;
+    padding: 14px 16px;
+    font-size: 13px;
+  }
+  .msg-error .err-code {
+    color: #ef4444;
+    font-weight: 600;
+    font-size: 12px;
+    margin-bottom: 4px;
+  }
+
+  /* -- Input bar -- */
+  .input-bar {
+    padding: 16px 24px;
+    background: #1e293b;
+    border-top: 1px solid #334155;
+    display: flex;
+    gap: 12px;
+    flex-shrink: 0;
+  }
+  .input-bar input {
+    flex: 1;
+    background: #0f172a;
+    border: 1px solid #334155;
+    color: #e2e8f0;
+    padding: 12px 16px;
+    border-radius: 10px;
+    font-size: 15px;
+  }
+  .input-bar input:focus { outline: none; border-color: #3b82f6; }
+  .input-bar input:disabled { opacity: 0.4; }
+  .btn-send {
+    background: #3b82f6;
+    color: #fff;
+    padding: 12px 24px;
+    border: none;
+    border-radius: 10px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .btn-send:hover { background: #2563eb; }
+  .btn-send:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* -- Log panel -- */
+  .log-toggle {
+    position: fixed;
+    bottom: 80px;
+    right: 24px;
+    background: #334155;
+    color: #e2e8f0;
+    border: none;
+    padding: 8px 14px;
+    border-radius: 8px;
+    font-size: 12px;
+    cursor: pointer;
+    z-index: 10;
+  }
+  .log-panel {
+    display: none;
+    position: fixed;
+    bottom: 120px;
+    right: 24px;
+    width: 500px;
+    max-height: 300px;
+    background: #0f172a;
+    border: 1px solid #334155;
+    border-radius: 12px;
+    overflow-y: auto;
+    padding: 12px;
+    font-family: 'Consolas', monospace;
+    font-size: 11px;
+    z-index: 10;
+  }
+  .log-panel.open { display: block; }
+  .log-entry { padding: 2px 0; border-bottom: 1px solid #1e293b; }
+  .log-entry .dir { font-weight: 600; }
+  .log-entry .dir.send { color: #3b82f6; }
+  .log-entry .dir.recv { color: #22c55e; }
+  .log-entry .ts { color: #64748b; }
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+  <div class="status-dot" id="statusDot"></div>
+  <h1>Hospital Navigation - WS Test Client</h1>
+  <span class="status-text" id="statusText">Disconnected</span>
+</div>
+
+<!-- Config -->
+<div class="config-bar">
+  <div>
+    <label>WS URL</label><br>
+    <input type="text" id="wsUrl" value="ws://localhost:8002/ws/v1/navigate" style="width:320px">
+  </div>
+  <div>
+    <label>Building</label><br>
+    <input type="text" id="buildingId" value="shlv" style="width:80px">
+  </div>
+  <div>
+    <label>Location (node)</label><br>
+    <input type="text" id="currentLocation" value="f1_j1" style="width:100px">
+  </div>
+  <div>
+    <label>Floor</label><br>
+    <input type="number" id="currentFloor" value="1" style="width:60px">
+  </div>
+  <div>
+    <label>Format</label><br>
+    <select id="outputFormat">
+      <option value="svg">SVG (Web)</option>
+      <option value="png">PNG (WhatsApp)</option>
+    </select>
+  </div>
+  <div>
+    <label>Profile</label><br>
+    <select id="profile">
+      <option value="default">Default</option>
+      <option value="wheelchair">Wheelchair</option>
+      <option value="elderly">Elderly</option>
+      <option value="emergency">Emergency</option>
+    </select>
+  </div>
+  <div style="align-self:flex-end">
+    <button class="btn btn-connect" id="btnConnect" onclick="toggleConnection()">Connect</button>
+  </div>
+</div>
+
+<!-- Chat -->
+<div class="chat-area" id="chatArea"></div>
+
+<!-- Input -->
+<div class="input-bar">
+  <input type="text" id="queryInput" placeholder="Contoh: Mau ke farmasi, Di mana toilet terdekat?, Antar ke radiologi..."
+         disabled onkeydown="if(event.key==='Enter')sendQuery()">
+  <button class="btn btn-send" id="btnSend" onclick="sendQuery()" disabled>Kirim</button>
+</div>
+
+<!-- Raw log -->
+<button class="log-toggle" onclick="toggleLog()">Raw Log</button>
+<div class="log-panel" id="logPanel"></div>
+
+<script>
+let ws = null;
+let isConnected = false;
+
+function toggleConnection() {
+  if (isConnected) disconnect();
+  else connect();
+}
+
+function connect() {
+  const url = document.getElementById('wsUrl').value;
+  addLog('send', 'Connecting to ' + url);
+
+  ws = new WebSocket(url);
+
+  ws.onopen = () => {
+    isConnected = true;
+    document.getElementById('statusDot').classList.add('connected');
+    document.getElementById('statusText').textContent = 'Connected';
+    document.getElementById('btnConnect').textContent = 'Disconnect';
+    document.getElementById('btnConnect').className = 'btn btn-disconnect';
+    document.getElementById('queryInput').disabled = false;
+    document.getElementById('btnSend').disabled = false;
+    addLog('recv', 'Connected');
+    addSystemMsg('WebSocket connected. Ketik pertanyaan navigasi.');
+  };
+
+  ws.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+    addLog('recv', JSON.stringify(data));
+    handleMessage(data);
+  };
+
+  ws.onclose = () => {
+    isConnected = false;
+    document.getElementById('statusDot').classList.remove('connected');
+    document.getElementById('statusText').textContent = 'Disconnected';
+    document.getElementById('btnConnect').textContent = 'Connect';
+    document.getElementById('btnConnect').className = 'btn btn-connect';
+    document.getElementById('queryInput').disabled = true;
+    document.getElementById('btnSend').disabled = true;
+    addLog('recv', 'Connection closed');
+  };
+
+  ws.onerror = (err) => {
+    addLog('recv', 'Error: ' + err.type);
+    addSystemMsg('WebSocket error. Pastikan backend running di ' + url);
+  };
+}
+
+function disconnect() {
+  if (ws) ws.close();
+}
+
+function sendQuery() {
+  const input = document.getElementById('queryInput');
+  const query = input.value.trim();
+  if (!query || !isConnected) return;
+
+  const payload = {
+    query: query,
+    building_id: document.getElementById('buildingId').value,
+    current_location: document.getElementById('currentLocation').value,
+    current_floor: parseInt(document.getElementById('currentFloor').value) || 1,
+    output_format: document.getElementById('outputFormat').value,
+    profile: document.getElementById('profile').value,
+  };
+
+  addUserMsg(query);
+  addLog('send', JSON.stringify(payload));
+  ws.send(JSON.stringify(payload));
+
+  input.value = '';
+
+  // Loading indicator
+  const loader = document.createElement('div');
+  loader.className = 'msg system';
+  loader.id = 'loader';
+  loader.innerHTML = '<div class="msg-bubble" style="color:#94a3b8">Memproses navigasi...</div>';
+  document.getElementById('chatArea').appendChild(loader);
+  scrollToBottom();
+}
+
+function handleMessage(data) {
+  removeLoader();
+
+  switch (data.type) {
+    case 'route_meta':
+      renderRouteMeta(data);
+      break;
+    case 'route_result':
+      renderRouteResult(data);
+      break;
+    case 'route_complete':
+      renderRouteComplete(data);
+      break;
+    case 'error':
+      renderError(data);
+      break;
+    default:
+      addSystemMsg('Unknown message type: ' + JSON.stringify(data));
+  }
+  scrollToBottom();
+}
+
+function renderRouteMeta(data) {
+  const el = document.createElement('div');
+  el.className = 'msg system';
+  const timeStr = data.estimated_time_s < 60
+    ? data.estimated_time_s + ' detik'
+    : Math.ceil(data.estimated_time_s / 60) + ' menit';
+  el.innerHTML = `
+    <div class="route-meta">
+      <div class="meta-item">
+        <div class="value">${Math.round(data.total_distance_m)}m</div>
+        <div class="label">JARAK</div>
+      </div>
+      <div class="meta-item">
+        <div class="value">${timeStr}</div>
+        <div class="label">ESTIMASI</div>
+      </div>
+      <div class="meta-item">
+        <div class="value">Lt. ${data.floors_involved.join(', ')}</div>
+        <div class="label">LANTAI</div>
+      </div>
+    </div>
+  `;
+  document.getElementById('chatArea').appendChild(el);
+}
+
+function renderRouteResult(data) {
+  const el = document.createElement('div');
+  el.className = 'msg system';
+
+  // Render images (1 per floor)
+  let imagesHtml = '';
+  const images = data.images || [];
+  for (const img of images) {
+    if (img.svg_data) {
+      imagesHtml += `<div class="step-image">${img.svg_data}</div>`;
+    } else if (img.image_url) {
+      imagesHtml += `<div class="step-image"><img src="${img.image_url}" alt="Route floor ${img.floor}"></div>`;
+    }
+  }
+  if (!imagesHtml) {
+    imagesHtml = `<div class="step-image" style="padding:24px;color:#94a3b8;font-size:13px">
+      Gambar tidak tersedia (floor SVG belum di-upload)
+    </div>`;
+  }
+
+  // Landmarks
+  let landmarksHtml = '';
+  if (data.landmarks && data.landmarks.length > 0) {
+    landmarksHtml = `<div class="step-landmarks">
+      ${data.landmarks.map(l => `<span>${l}</span>`).join('')}
+    </div>`;
+  }
+
+  // Instruction (combined, multi-line)
+  const instructionHtml = (data.instruction || '').replace(/\n/g, '<br>');
+
+  el.innerHTML = `
+    <div class="route-step">
+      ${imagesHtml}
+      <div class="step-instruction">${instructionHtml || 'Instruksi tidak tersedia'}</div>
+      ${landmarksHtml}
+    </div>
+  `;
+  document.getElementById('chatArea').appendChild(el);
+}
+
+function renderRouteComplete(data) {
+  const el = document.createElement('div');
+  el.className = 'msg system';
+  el.innerHTML = `
+    <div class="route-complete">
+      <div class="dest">${data.destination}</div>
+      <div style="margin-top:6px;color:#bbf7d0">${data.message}</div>
+    </div>
+  `;
+  document.getElementById('chatArea').appendChild(el);
+}
+
+function renderError(data) {
+  const el = document.createElement('div');
+  el.className = 'msg system';
+  el.innerHTML = `
+    <div class="msg-error">
+      <div class="err-code">${data.code}</div>
+      <div>${data.message}</div>
+    </div>
+  `;
+  document.getElementById('chatArea').appendChild(el);
+}
+
+function addUserMsg(text) {
+  const el = document.createElement('div');
+  el.className = 'msg user';
+  el.innerHTML = `<div class="msg-bubble">${escapeHtml(text)}</div>`;
+  document.getElementById('chatArea').appendChild(el);
+  scrollToBottom();
+}
+
+function addSystemMsg(text) {
+  const el = document.createElement('div');
+  el.className = 'msg system';
+  el.innerHTML = `<div class="msg-bubble">${text}</div>`;
+  document.getElementById('chatArea').appendChild(el);
+  scrollToBottom();
+}
+
+function removeLoader() {
+  const loader = document.getElementById('loader');
+  if (loader) loader.remove();
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+function scrollToBottom() {
+  const area = document.getElementById('chatArea');
+  area.scrollTop = area.scrollHeight;
+}
+
+// Raw log
+function addLog(dir, text) {
+  const panel = document.getElementById('logPanel');
+  const ts = new Date().toLocaleTimeString();
+  const entry = document.createElement('div');
+  entry.className = 'log-entry';
+  entry.innerHTML = `<span class="ts">${ts}</span> <span class="dir ${dir}">${dir === 'send' ? 'SEND' : 'RECV'}</span> ${escapeHtml(text)}`;
+  panel.appendChild(entry);
+  panel.scrollTop = panel.scrollHeight;
+}
+
+function toggleLog() {
+  document.getElementById('logPanel').classList.toggle('open');
+}
+</script>
+</body>
+</html>

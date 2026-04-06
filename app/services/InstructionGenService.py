@@ -27,9 +27,12 @@ class InstructionGenerator(BaseAgent):
         distance_steps = int(distance_m / 0.7) if distance_m > 0 else 5
 
         landmarks_str = ", ".join(landmarks) if landmarks else "tidak ada landmark terdekat"
-        floor_change_str = "tidak ada" if not floor_change else (
-            f"dari Lantai {floor_change.get('from', '?')} ke Lantai {floor_change.get('to', '?')} via {floor_change.get('via', 'lift')}"
-        )
+        floor_change_str = "tidak ada"
+        if floor_change:
+            fc_from = floor_change.get("from_floor") or floor_change.get("from", "?")
+            fc_to = floor_change.get("to_floor") or floor_change.get("to", "?")
+            fc_via = floor_change.get("via", "lift")
+            floor_change_str = f"dari Lantai {fc_from} ke Lantai {fc_to} via {fc_via}"
 
         direction_labels = {
             "straight": "lurus",

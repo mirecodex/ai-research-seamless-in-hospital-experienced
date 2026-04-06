@@ -404,4 +404,7 @@ class MCPConfig:
             logger.info("Reconnection finished; loaded %d tools", len(self._all_tools or []))
 
 
-mcpconfig = MCPConfig([env.MCP_CONFIG_AI_SEARCH, env.MCP_CONFIG_HOPE_RETRIEVER])
+if env.MCP_SESSION:
+    mcpconfig = MCPConfig([env.MCP_CONFIG_AI_SEARCH, env.MCP_CONFIG_HOPE_RETRIEVER])
+else:
+    mcpconfig = None

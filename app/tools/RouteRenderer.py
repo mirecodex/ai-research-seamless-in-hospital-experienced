@@ -65,6 +65,7 @@ class RouteRendererHandler:
                 "direction": segment.direction,
                 "landmarks": segment.landmarks,
                 "distance_m": round(segment.distance / MAP_RATIO, 1),
+                "floor_change": segment.floor_change,
                 "svg_data": svg_str if output_format == "svg" and svg_str else None,
                 "image_url": None,
             }
@@ -76,6 +77,49 @@ class RouteRendererHandler:
             results.append(entry)
 
         return results
+
+    async def render_full(
+        self,
+        path: list[str],
+        building_id: str = "shlv",
+        profile: str = "default",
+        output_format: str = "svg",
+    ) -> dict:
+        """Render full route as one image per floor + combined segment metadata.
+
+        Returns {"floors": {floor: {svg_data, image_url}}, "segments": [...]}
+        """
+        graph = GraphManager.get(building_id)
+        if not graph:
+            return {"floors": {}, "segments": []}
+
+        segments = self._segmenter.segment(graph, path, profile)
+        if not segments:
+            return {"floors": {}, "segments": []}
+
+        base_svgs = await self._get_floor_svgs(building_id, graph)
+        floor_svgs = self._renderer.render_full_route(base_svgs, segments, graph)
+
+        floors_result = {}
+        for floor, svg_str in floor_svgs.items():
+            entry = {"svg_data": svg_str if output_format == "svg" else None, "image_url": None}
+            if output_format == "png" and svg_str:
+                url = await self._render_png_and_upload(svg_str, building_id, path, floor)
+                entry["image_url"] = url
+            floors_result[floor] = entry
+
+        seg_meta = []
+        for i, seg in enumerate(segments):
+            seg_meta.append({
+                "step": i + 1,
+                "floor": seg.floor,
+                "direction": seg.direction,
+                "landmarks": seg.landmarks,
+                "distance_m": round(seg.distance / MAP_RATIO, 1),
+                "floor_change": seg.floor_change,
+            })
+
+        return {"floors": floors_result, "segments": seg_meta}
 
     async def _get_floor_svgs(self, building_id: str, graph) -> dict[int, str]:
         """Load floor SVGs from local filesystem with caching."""
