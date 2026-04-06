@@ -14,7 +14,7 @@ class NavigationRouter(BaseAgent):
             llm=llm,
             prompt_template=NAVIGATION_ROUTER_PROMPT,
             output_model=NavigationRouterOutput,
-            use_structured_output=True,
+            use_structured_output=False,
             **kwargs
         )
 
@@ -29,7 +29,8 @@ class NavigationRouter(BaseAgent):
         agent_state = {"messages": [HumanMessage(content=user_query)]}
         raw, parsed = await self.arun_chain(state=agent_state)
 
-        decision = parsed.intent.value
+        decision = parsed.get("intent", "fallback") if isinstance(parsed, dict) else parsed.intent.value
+        reasoning = parsed.get("reasoning", "") if isinstance(parsed, dict) else parsed.reasoning
 
         return {
             "decision": decision,
@@ -38,5 +39,5 @@ class NavigationRouter(BaseAgent):
             "current_location": state.get("current_location"),
             "current_floor": state.get("current_floor"),
             "output_format": state.get("output_format", "svg"),
-            "response": f"Routing to {decision}. Reasoning: {parsed.reasoning}",
+            "response": f"Routing to {decision}. Reasoning: {reasoning}",
         }

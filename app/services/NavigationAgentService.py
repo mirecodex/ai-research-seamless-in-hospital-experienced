@@ -50,7 +50,7 @@ class NavigationAgent(BaseAgent):
             output_format: str = "svg",
         ) -> str:
             """Render visual route images for each navigation segment.
-            path MUST be a JSON array string of node IDs from pathfinding result, e.g. '["f1_j1","f1_j5","f1_j9","f12a-..."]'.
+            path MUST be a JSON array string of node IDs from pathfinding result, e.g. '["j1","j5","j9","f12a-..."]'.
             Returns JSON array with step, floor, direction, landmarks, distance_m per segment. Images are stored separately.
             """
             path_list = json.loads(path) if isinstance(path, str) else path
@@ -83,14 +83,14 @@ class NavigationAgent(BaseAgent):
             input_data = state.get("input", {})
             user_query = input_data.get("query", "") if isinstance(input_data, dict) else str(input_data)
             building_id = state.get("building_id", "shlv")
-            current_location = state.get("current_location", "f1_j1")
+            current_location = state.get("current_location", "j1")
             current_floor = state.get("current_floor", 1)
             output_format = state.get("output_format", "svg")
 
             self.rebind_prompt_variable(
                 time=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 building_id=building_id,
-                current_location=current_location or "f1_j1",
+                current_location=current_location or "j1",
                 current_floor=str(current_floor or 1),
             )
 
@@ -125,7 +125,7 @@ class NavigationAgent(BaseAgent):
                             if tool_name == "pathfinding":
                                 if "building_id" not in tool_args:
                                     tool_args["building_id"] = building_id
-                                tool_args["from_node"] = current_location or "f1_j1"
+                                tool_args["from_node"] = current_location or "j1"
                             if tool_name == "route_renderer":
                                 if "building_id" not in tool_args:
                                     tool_args["building_id"] = building_id

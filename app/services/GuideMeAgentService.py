@@ -60,12 +60,12 @@ class GuideMeAgent(BaseAgent):
             input_data = state.get("input", {})
             user_query = input_data.get("query", "") if isinstance(input_data, dict) else str(input_data)
             building_id = state.get("building_id", "shlv")
-            current_location = state.get("current_location", "f1_j1")
+            current_location = state.get("current_location", "j1")
 
             self.rebind_prompt_variable(
                 time=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 building_id=building_id,
-                current_location=current_location or "f1_j1",
+                current_location=current_location or "j1",
             )
 
             messages = [HumanMessage(content=user_query)]
@@ -98,7 +98,7 @@ class GuideMeAgent(BaseAgent):
                             if "building_id" not in tool_args and tool_name != "virtual_queue_lookup":
                                 tool_args["building_id"] = building_id
                             if tool_name == "pathfinding" and "from_node" not in tool_args:
-                                tool_args["from_node"] = current_location or "f1_j1"
+                                tool_args["from_node"] = current_location or "j1"
 
                             tool_result = await tool_to_use.ainvoke(tool_args)
                             tool_result_str = str(tool_result)

@@ -95,10 +95,10 @@ User: "Mau ke farmasi"
 1. Call ai_search_navigate(query="farmasi", building_id="shlv")
    -> Result: found=true, node_id="f12a668f-...", name="Pharmacy / Farmasi", floor=1
 
-2. Call pathfinding(from_node="f1_j1", to_node="f12a668f-...", building_id="shlv")
-   -> Result: success=true, path=["f1_j1","f1_j5","f1_j9","f12a668f-..."], total_distance=45.2
+2. Call pathfinding(from_node="j1", to_node="f12a668f-...", building_id="shlv")
+   -> Result: success=true, path=["j1","f1_j5","f1_j9","f12a668f-..."], total_distance=45.2
 
-3. Call route_renderer(path='["f1_j1","f1_j5","f1_j9","f12a668f-..."]', building_id="shlv")
+3. Call route_renderer(path='["j1","f1_j5","f1_j9","f12a668f-..."]', building_id="shlv")
    -> Result: list of segment objects with step, floor, direction, landmarks
 
 4. Final answer: "Farmasi ada di Lantai 1, sekitar 30 langkah dari posisi Anda (~30 detik jalan kaki). Silakan ikuti 2 langkah panduan berikut."
